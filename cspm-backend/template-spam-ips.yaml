@@ -1,0 +1,71 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Deploy only the spam IP CloudWatch endpoint behind API Gateway.
+
+Globals:
+  Function:
+    Runtime: nodejs18.x
+    Timeout: 30
+    MemorySize: 256
+
+Parameters:
+  LogGroupName:
+    Type: String
+    Default: /aws/lambda/lambda_handler
+  RegionName:
+    Type: String
+    Default: ap-southeast-2
+  SpamIpThreshold:
+    Type: Number
+    Default: 10
+  SpamIpWindowSeconds:
+    Type: Number
+    Default: 86400
+  SpamIpLimit:
+    Type: Number
+    Default: 1000
+
+Resources:
+  SpamIpsApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowHeaders:
+          - Content-Type
+        AllowMethods:
+          - GET
+          - OPTIONS
+        AllowOrigins:
+          - '*'
+
+  SpamIpsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: spam-ips-lambda.handler
+      Environment:
+        Variables:
+          AWS_REGION: !Ref RegionName
+          LOG_GROUP_NAME: !Ref LogGroupName
+          SPAM_IP_THRESHOLD: !Ref SpamIpThreshold
+          SPAM_IP_WINDOW_SECONDS: !Ref SpamIpWindowSeconds
+          SPAM_IP_LIMIT: !Ref SpamIpLimit
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - logs:FilterLogEvents
+                - logs:DescribeLogGroups
+              Resource: '*'
+      Events:
+        GetSpamIps:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref SpamIpsApi
+            Path: /api/cloudwatch/spam-ips
+            Method: GET
+
+Outputs:
+  SpamIpsApiUrl:
+    Description: API Gateway URL for the spam IP endpoint
+    Value: !Sub "https://${SpamIpsApi}.execute-api.${AWS::Region}.amazonaws.com/api/cloudwatch/spam-ips"

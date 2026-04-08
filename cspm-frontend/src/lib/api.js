@@ -10,7 +10,7 @@ async function readJson(response) {
 
 // KHAI BÁO ĐƯỜNG LINK API GATEWAY THẬT TỪ AWS
 // (Lưu ý: Không có chữ /api/findings ở cuối nhé, chỉ lấy phần domain gốc thôi)
-const API_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = 'https://c1zk7r650b.execute-api.ap-southeast-2.amazonaws.com';
 
 export async function getDashboardSummary(signal) {
   const response = await fetch(`${API_BASE_URL}/api/dashboard-summary`, { signal });

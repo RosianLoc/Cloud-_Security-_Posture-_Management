@@ -1,6 +1,6 @@
 # 1. CẤU HÌNH NHÀ CUNG CẤP AWS
 provider "aws" {
-  region = "us-east-1"
+  region = "ap-southeast-2"
 }
 
 # 2. TẠO KÉT SẮT DYNAMODB (Nơi chứa danh sách lỗi)
@@ -41,6 +41,19 @@ resource "aws_iam_role_policy_attachment" "lambda_dynamodb" {
 resource "aws_iam_role_policy_attachment" "lambda_security_audit" {
   role       = aws_iam_role.lambda_exec_role.name
   policy_arn = "arn:aws:iam::aws:policy/SecurityAudit" # Quyền này cho phép Boto3 quét S3, EC2, IAM...
+}
+
+resource "aws_lambda_function" "cspm_spam_ip_handler" {
+  function_name = "cspm-spam-ip-handler"
+  role          = aws_iam_role.lambda_exec_role.arn
+  filename      = "../cspm-backend/cspm_backend_payload.zip"
+  handler       = "api.get_spam_ips.lambda_handler"
+  runtime       = "python3.10"
+  timeout       = 30
+}
+resource "aws_iam_role_policy_attachment" "lambda_cloudwatch_read" {
+  role       = aws_iam_role.lambda_exec_role.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsReadOnlyAccess"
 }
 
 # 4. TẠO ANH BẢO VỆ LAMBDA VÀ ĐƯA CODE (.ZIP) LÊN MÂY
@@ -118,6 +131,25 @@ resource "aws_lambda_function" "cspm_api_handler" {
     }
   }
 }
+resource "aws_apigatewayv2_route" "get_spam_ips_route" {
+  api_id    = aws_apigatewayv2_api.cspm_api.id
+  route_key = "GET /api/cloudwatch/spam-ips"
+  target    = "integrations/${aws_apigatewayv2_integration.spam_ip_integration.id}"
+}
+resource "aws_apigatewayv2_integration" "spam_ip_integration" {
+  api_id                 = aws_apigatewayv2_api.cspm_api.id
+  integration_type       = "AWS_PROXY"
+  integration_uri        = aws_lambda_function.cspm_spam_ip_handler.invoke_arn
+  payload_format_version = "2.0"
+}
+resource "aws_lambda_permission" "api_gw_spam_ip" {
+  statement_id  = "AllowExecutionFromAPIGatewaySpamIp"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.cspm_spam_ip_handler.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.cspm_api.execution_arn}/*/*"
+}
+
 
 # 3. Mở một cái "Quầy số 1" (Route) trên Cửa chính
 resource "aws_apigatewayv2_route" "get_findings_route" {
@@ -172,5 +204,6 @@ output "api_urls" {
     get_findings      = "${aws_apigatewayv2_api.cspm_api.api_endpoint}/api/findings"
     dashboard_summary = "${aws_apigatewayv2_api.cspm_api.api_endpoint}/api/dashboard-summary"
     remediate         = "${aws_apigatewayv2_api.cspm_api.api_endpoint}/api/findings/{id}/remediate"
+    spam_ips          = "${aws_apigatewayv2_api.cspm_api.api_endpoint}/api/cloudwatch/spam-ips"
   }
 }
