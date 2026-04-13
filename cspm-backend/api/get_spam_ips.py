@@ -4,10 +4,12 @@ import os
 from datetime import datetime, timezone
 from decimal import Decimal
 
-cloudwatch = boto3.client('logs', region_name='ap-southeast-2')
-dynamodb = boto3.resource('dynamodb', region_name='ap-southeast-2')
+cloudwatch = boto3.client('logs')
+dynamodb = boto3.resource('dynamodb')
 
 HISTORY_TABLE = os.environ.get('SPAM_HISTORY_TABLE', 'cspm-spam-ip-history')
+BLOCKED_TABLE = os.environ.get('BLOCKED_IPS_TABLE', 'cspm-blocked-ips')
+BAN_THRESHOLD = 20
 
 def detect_spam_ips(log_group_name, threshold=5, window_seconds=60, limit=1000):
     now = int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -44,7 +46,7 @@ def detect_spam_ips(log_group_name, threshold=5, window_seconds=60, limit=1000):
             break
 
     spam_ips = [
-        {"ip": ip, "count": count}
+        {"ips": ip, "counts": count}
         for ip, count in ip_count.items()
         if count >= threshold
     ]
@@ -54,19 +56,33 @@ def detect_spam_ips(log_group_name, threshold=5, window_seconds=60, limit=1000):
         "spamIps": spam_ips,
     }
 
+def ban_ip(ip, count):
+    table = dynamodb.Table(BLOCKED_TABLE)
+
+    table.put_item(Item={
+        "ip": ip,
+        "blocked_at": datetime.now(timezone.utc).isoformat(),
+        "reason": f"spam_detected_{count}",
+        "ttl": int(datetime.now(timezone.utc).timestamp()) + 3600
+    })
+
 def save_snapshot(spam_ips, window_from, window_to):
-    """Chỉ lưu khi có spam, dùng window_from+window_to làm key"""
+
     if not spam_ips:
         return
-
+    
+    
     table = dynamodb.Table(HISTORY_TABLE)
-    table.put_item(Item={
-        "id":          f"{window_from}_{window_to}",
-        "window_from": window_from,
-        "window_to":   window_to,
-        "spam_ips":    spam_ips,
-        "saved_at":    datetime.now(timezone.utc).isoformat()
+    for item in spam_ips:
+        table.put_item(Item={
+            "id":          f"{window_from}_{window_to}",
+            "window_from": window_from,
+            "window_to":   window_to,
+            "ip":     item["ips"],
+            "count":      item["counts"],
+            "saved_at":    datetime.now(timezone.utc).isoformat()
     })
+
 
 def load_history(limit=50):
     """Lấy toàn bộ lịch sử, sắp xếp mới nhất lên đầu"""
@@ -86,7 +102,7 @@ def convert_decimal(obj):
         return obj
     
 def lambda_handler(event, context):
-    # Lấy IP người gọi
+
     try:
         caller_ip = event["requestContext"]["http"]["sourceIp"]
     except KeyError:
@@ -97,31 +113,40 @@ def lambda_handler(event, context):
 
     print(f"Request received IP={caller_ip}")
 
-    # Tính khoảng thời gian scan
-    now = datetime.now(timezone.utc)
     window_seconds = 60
-    window_to   = now.strftime("%Y-%m-%dT%H:%M:%SZ")
-    window_from = datetime.fromtimestamp(
-        now.timestamp() - window_seconds, tz=timezone.utc
-    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+
+    window_to_ts = (now_ts // window_seconds) * window_seconds
+    window_from_ts = window_to_ts - window_seconds
+
+    window_to = datetime.fromtimestamp(window_to_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    window_from = datetime.fromtimestamp(window_from_ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     log_group = '/aws/lambda/cspm-spam-ip-handler'
     threshold = 5
 
     try:
-        # 1. Scan CloudWatch
         result = detect_spam_ips(log_group, threshold, window_seconds)
 
-        # 2. Lưu snapshot nếu có spam
         save_snapshot(result["spamIps"], window_from, window_to)
 
         history = convert_decimal(load_history())
-        current = convert_decimal({
-            "window_from": window_from,
-            "window_to":   window_to,
-            "eventCount":  result["eventCount"],
-            "spamIps":     result["spamIps"]
-        })
+        current = []
+        for item in result["spamIps"]:
+            ip = item["ips"]
+            count = item["counts"]
+
+            if count> BAN_THRESHOLD: 
+                ban_ip(ip, count)
+
+            else: 
+                current.append({
+                "window_from": window_from,
+                "window_to":   window_to,
+                "eventCount":  result["eventCount"],
+                "ip":    ip,
+                "count":  count
+            })
         return {
             "statusCode": 200,
             "headers": {
