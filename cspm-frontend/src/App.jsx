@@ -319,20 +319,19 @@ useEffect(() => {
         <section className="panel findings-panel" style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
             <div>
-              <p className="eyebrow">CloudWatch · Lambda</p>
               <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Spam IP Detection</h2>
             </div>
             {!spamLoading && spamData && (
               <span style={{
-                background: spamData.current.spamIps.length ? 'rgba(220,53,69,0.12)' : 'rgba(25,200,100,0.12)',
-                color: spamData.current.spamIps.length ? '#dc3545' : '#19c864',
+                background: spamData.current.length ? 'rgba(220,53,69,0.12)' : 'rgba(25,200,100,0.12)',
+                color: spamData.current.length ? '#dc3545' : '#19c864',
                 padding: '4px 12px',
                 borderRadius: '999px',
                 fontSize: '0.75rem',
                 fontWeight: 600
               }}>
-                {spamData.current.spamIps.length
-                  ? `${spamData.current.spamIps.length} threat${spamData.current.spamIps.length > 1 ? 's' : ''} detected`
+                {spamData.current.length
+                  ? `${spamData.current.length} threat${spamData.current.length > 1 ? 's' : ''} detected`
                   : 'Clean'}
               </span>
             )}
@@ -347,24 +346,24 @@ useEffect(() => {
 
           {!spamLoading && spamData && (
             <>
-              {spamData.current.spamIps.length === 0 ? (
+              {spamData.current.length === 0 ? (
                 <div className="empty-state">
                   <ShieldIcon />
                   <p>No spam IPs detected in this window.</p>
                 </div>
               ) : (
                 <div className="finding-list">
-                  {spamData.current.spamIps
+                  {spamData.current
                     .sort((a, b) => b.count - a.count)
                     .map((item, index) => (
                       <article key={item.ip} className="finding-row" style={{ animationDelay: `${index * 60}ms` }}>
                         <div className="finding-copy">
                           <h3 style={{ fontFamily: 'monospace', letterSpacing: '0.03em' }}>{item.ip}</h3>
                           <p>
-                            {item.count} requests ·{' '}
-                            {new Date(spamData.current.window_from).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-                            {' → '}
-                            {new Date(spamData.current.window_to).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                            {item.count} requests {' '}
+                            {new Date(item.window_from).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                            {' to '}
+                            {new Date(item.window_to).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
                           </p>
                         </div>
                         <span className="status-chip status-chip--fail">
@@ -398,21 +397,22 @@ useEffect(() => {
                     {spamData.history.map((entry) => (
                       <article key={entry.id} className="finding-row">
                         <div className="finding-copy">
-                          {entry.spam_ips.map(ip => (
-                            <h3 key={ip.ip} style={{ fontFamily: 'monospace', letterSpacing: '0.03em', marginBottom: '2px' }}>
-                              {ip.ip}
+                         
+                            <h3 key={entry.ip} style={{ fontFamily: 'monospace', letterSpacing: '0.03em', marginBottom: '2px' }}>
+                              {entry.ip}
                             </h3>
-                          ))}
+                        
                           <p>
+                             {' from '}
                             {new Date(entry.window_from).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-                            {' -> '}
+                            {' to '}
                             {new Date(entry.window_to).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
-                            {' ngày '}
+                            {' day '}
                             {new Date(entry.window_from).toLocaleDateString('vi-VN')}
                           </p>
                         </div>
                         <span className="status-chip status-chip--fail">
-                          {entry.spam_ips.map(ip => `${ip.count} req`).join(' · ')}
+                          {(`${entry.count} request`)}
                         </span>
                       </article>
                     ))}

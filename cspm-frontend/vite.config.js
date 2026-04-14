@@ -8,7 +8,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'https://9gkjuri9o4.execute-api.ap-southeast-2.amazonaws.com',
+        target: 'https://uwt6j4ab63.execute-api.us-east-1.amazonaws.com/',
         changeOrigin: true
       }
     }
