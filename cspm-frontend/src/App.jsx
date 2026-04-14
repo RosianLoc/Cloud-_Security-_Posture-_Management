@@ -32,20 +32,19 @@ const severityOptions = ['All', 'Fail', 'Warning', 'Pass'];
 const statusOptions = ['All', 'Open', 'Resolved'];
 
 function App() {
-  const [search, setSearch] = useState('');
-  const [severity, setSeverity] = useState('All');
-  const [service, setService] = useState('All');
-  const [status, setStatus] = useState('All');
-  const [summary, setSummary] = useState(initialSummary);
-  const [findings, setFindings] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [actionFindingId, setActionFindingId] = useState('');
-
-  const deferredSearch = useDeferredValue(search);
-
-  const [spamIps, setSpamIps] = useState([]);
-  const [spamLoading, setSpamLoading] = useState(true);
+const [search, setSearch] = useState('');
+const [severity, setSeverity] = useState('All');
+const [service, setService] = useState('All');
+const [status, setStatus] = useState('All');
+const [summary, setSummary] = useState(initialSummary);
+const [findings, setFindings] = useState([]);
+const [loading, setLoading] = useState(true);
+const [error, setError] = useState('');
+const [actionFindingId, setActionFindingId] = useState('');
+const [spamData, setSpamData] = useState(null);
+const deferredSearch = useDeferredValue(search);
+const [spamIps, setSpamIps] = useState([]);
+const [spamLoading, setSpamLoading] = useState(true);
 
 useEffect(() => {
     const controller = new AbortController();
@@ -53,7 +52,7 @@ useEffect(() => {
       setSpamLoading(true);
       try {
         const data = await getSpamIps(controller.signal);
-        setSpamIps(data.spamIps || []);
+       setSpamData(data);
       } catch (e) {
         if (e.name !== 'AbortError') setSpamIps([]);
       } finally {
@@ -320,19 +319,22 @@ useEffect(() => {
         <section className="panel findings-panel" style={{ marginBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
             <div>
-              <p className="eyebrow">CloudWatch · Lambda</p>
               <h2 style={{ margin: 0, fontSize: '1rem', fontWeight: 600 }}>Spam IP Detection</h2>
             </div>
-            <span className="inline-pill" style={{
-              background: spamIps.length ? 'rgba(220,53,69,0.12)' : 'rgba(25,200,100,0.12)',
-              color: spamIps.length ? '#dc3545' : '#19c864',
-              padding: '4px 12px',
-              borderRadius: '999px',
-              fontSize: '0.75rem',
-              fontWeight: 600
-            }}>
-              {spamIps.length ? `${spamIps.length} threat${spamIps.length > 1 ? 's' : ''} detected` : 'Clean'}
-            </span>
+            {!spamLoading && spamData && (
+              <span style={{
+                background: spamData.current.length ? 'rgba(220,53,69,0.12)' : 'rgba(25,200,100,0.12)',
+                color: spamData.current.length ? '#dc3545' : '#19c864',
+                padding: '4px 12px',
+                borderRadius: '999px',
+                fontSize: '0.75rem',
+                fontWeight: 600
+              }}>
+                {spamData.current.length
+                  ? `${spamData.current.length} threat${spamData.current.length > 1 ? 's' : ''} detected`
+                  : 'Clean'}
+              </span>
+            )}
           </div>
 
           {spamLoading && (
@@ -342,46 +344,84 @@ useEffect(() => {
             </div>
           )}
 
-          {!spamLoading && spamIps.length === 0 && (
-            <div className="empty-state">
-              <ShieldIcon />
-              <p>No spam IPs detected in the last 24 hours.</p>
-            </div>
-          )}
+          {!spamLoading && spamData && (
+            <>
+              {spamData.current.length === 0 ? (
+                <div className="empty-state">
+                  <ShieldIcon />
+                  <p>No spam IPs detected in this window.</p>
+                </div>
+              ) : (
+                <div className="finding-list">
+                  {spamData.current
+                    .sort((a, b) => b.count - a.count)
+                    .map((item, index) => (
+                      <article key={item.ip} className="finding-row" style={{ animationDelay: `${index * 60}ms` }}>
+                        <div className="finding-copy">
+                          <h3 style={{ fontFamily: 'monospace', letterSpacing: '0.03em' }}>{item.ip}</h3>
+                          <p>
+                            {item.count} requests {' '}
+                            {new Date(item.window_from).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                            {' to '}
+                            {new Date(item.window_to).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                          </p>
+                        </div>
+                        <span className="status-chip status-chip--fail">
+                          {item.count > 10 ? 'Critical' : item.count > 5 ? 'High' : 'Medium'}
+                        </span>
+                        <button
+                          type="button"
+                          className="action-button"
+                          onClick={() => navigator.clipboard?.writeText(item.ip)}
+                        >
+                          Copy IP
+                        </button>
+                      </article>
+                    ))}
+                </div>
+              )}
 
-          {!spamLoading && spamIps.length > 0 && (
-            <div className="finding-list">
-              {spamIps
-                .sort((a, b) => b.count - a.count)
-                .map((item, index) => (
-                  <article
-                    key={item.ip}
-                    className="finding-row"
-                    style={{ animationDelay: `${index * 60}ms` }}
-                  >
-                    <div className="finding-copy">
-                      <h3 style={{ fontFamily: 'monospace', letterSpacing: '0.03em' }}>{item.ip}</h3>
-                      <p>{item.count} requests · Last 24h</p>
-                    </div>
-
-                    <span className="status-chip status-chip--fail">
-                      {item.count > 50 ? 'Critical' : item.count > 20 ? 'High' : 'Medium'}
-                    </span>
-
-                    <button
-                      type="button"
-                      className="action-button"
-                      onClick={() => navigator.clipboard?.writeText(item.ip)}
-                      title="Copy IP to clipboard"
-                    >
-                      Copy IP
-                    </button>
-                  </article>
-                ))}
-            </div>
+              {/* History */}
+              {spamData.history.length > 0 && (
+                <details style={{ marginTop: '1rem' }}>
+                  <summary style={{
+                    fontSize: '0.8rem',
+                    color: 'var(--color-text-secondary, #aaa)',
+                    cursor: 'pointer',
+                    padding: '6px 0',
+                    userSelect: 'none'
+                  }}>
+                    History · {spamData.history.length} entries
+                  </summary>
+                  <div className="finding-list" style={{ marginTop: '0.5rem' }}>
+                    {spamData.history.map((entry) => (
+                      <article key={entry.id} className="finding-row">
+                        <div className="finding-copy">
+                         
+                            <h3 key={entry.ip} style={{ fontFamily: 'monospace', letterSpacing: '0.03em', marginBottom: '2px' }}>
+                              {entry.ip}
+                            </h3>
+                        
+                          <p>
+                             {' from '}
+                            {new Date(entry.window_from).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                            {' to '}
+                            {new Date(entry.window_to).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                            {' day '}
+                            {new Date(entry.window_from).toLocaleDateString('vi-VN')}
+                          </p>
+                        </div>
+                        <span className="status-chip status-chip--fail">
+                          {(`${entry.count} request`)}
+                        </span>
+                      </article>
+                    ))}
+                  </div>
+                </details>
+              )}
+            </>
           )}
         </section>
-
         <section className="panel findings-panel">
           <div className="search-shell">
             <SearchIcon />

@@ -1,6 +1,6 @@
 # 1. CẤU HÌNH NHÀ CUNG CẤP AWS
 provider "aws" {
-  region = "ap-southeast-2"
+  region = "us-east-1"
 }
 
 # 2. TẠO KÉT SẮT DYNAMODB (Nơi chứa danh sách lỗi)
@@ -50,6 +50,22 @@ resource "aws_lambda_function" "cspm_spam_ip_handler" {
   handler       = "api.get_spam_ips.lambda_handler"
   runtime       = "python3.10"
   timeout       = 30
+
+  environment {
+    variables = {
+      SPAM_HISTORY_TABLE = aws_dynamodb_table.spam_ip_history.name
+    }
+  }
+}
+resource "aws_dynamodb_table" "spam_ip_history" {
+  name         = "cspm-spam-ip-history"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
+
+  attribute {
+    name = "id"
+    type = "S"
+  }
 }
 resource "aws_iam_role_policy_attachment" "lambda_cloudwatch_read" {
   role       = aws_iam_role.lambda_exec_role.name
@@ -98,6 +114,51 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   source_arn    = aws_cloudwatch_event_rule.every_hour.arn
 }
 
+/////////////////////////////////////////////////////////////////
+resource "aws_dynamodb_table" "blocked_ips" {
+  name         = "cspm-blocked-ips"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "ip"
+
+  attribute {
+    name = "ip"
+    type = "S"
+  }
+}
+
+resource "aws_lambda_function" "cspm_authorizer" {
+  function_name = "cspm-ip-authorizer"
+  role          = aws_iam_role.lambda_exec_role.arn
+  filename      = "../cspm-backend/cspm_backend_payload.zip"
+  handler       = "api.authorizer.lambda_handler" 
+  runtime       = "python3.10"
+
+  environment {
+    variables = {
+      BLOCKED_IPS_TABLE = aws_dynamodb_table.blocked_ips.name
+    }
+  }
+}
+
+resource "aws_lambda_permission" "api_gw_authorizer" {
+  statement_id  = "AllowExecutionFromAPIGatewayAuthorizer"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.cspm_authorizer.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_apigatewayv2_api.cspm_api.execution_arn}/*/*"
+}
+
+resource "aws_apigatewayv2_authorizer" "ip_authorizer" {
+  api_id                            = aws_apigatewayv2_api.cspm_api.id
+  authorizer_type                   = "REQUEST"
+  authorizer_uri                    = aws_lambda_function.cspm_authorizer.invoke_arn
+  identity_sources                  = ["$context.identity.sourceIp"]
+  name                              = "ip-authorizer"
+  authorizer_payload_format_version = "2.0"
+  authorizer_result_ttl_in_seconds  = 0
+  enable_simple_responses           = true 
+}
+/////////////////////////////////////////////////////////////////////////////////////////
 # =========================================================================
 # PHẦN 2: XÂY DỰNG API GATEWAY (CẦU NỐI CHO FRONTEND)
 # =========================================================================
@@ -131,11 +192,7 @@ resource "aws_lambda_function" "cspm_api_handler" {
     }
   }
 }
-resource "aws_apigatewayv2_route" "get_spam_ips_route" {
-  api_id    = aws_apigatewayv2_api.cspm_api.id
-  route_key = "GET /api/cloudwatch/spam-ips"
-  target    = "integrations/${aws_apigatewayv2_integration.spam_ip_integration.id}"
-}
+
 resource "aws_apigatewayv2_integration" "spam_ip_integration" {
   api_id                 = aws_apigatewayv2_api.cspm_api.id
   integration_type       = "AWS_PROXY"
@@ -150,27 +207,39 @@ resource "aws_lambda_permission" "api_gw_spam_ip" {
   source_arn    = "${aws_apigatewayv2_api.cspm_api.execution_arn}/*/*"
 }
 
-
-# 3. Mở một cái "Quầy số 1" (Route) trên Cửa chính
+////////////////////////////////////////////////////////////////////////
 resource "aws_apigatewayv2_route" "get_findings_route" {
-  api_id    = aws_apigatewayv2_api.cspm_api.id
-  route_key = "GET /api/findings" # Đường dẫn URL
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  api_id         = aws_apigatewayv2_api.cspm_api.id
+  route_key      = "GET /api/findings"
+  target         = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorizer_id  = aws_apigatewayv2_authorizer.ip_authorizer.id 
+  authorization_type = "CUSTOM"                                  
 }
 
-# 2. MỞ THÊM CỬA CHO SUMMARY (MỚI)
 resource "aws_apigatewayv2_route" "get_summary_route" {
-  api_id    = aws_apigatewayv2_api.cspm_api.id
-  route_key = "GET /api/dashboard-summary"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  api_id             = aws_apigatewayv2_api.cspm_api.id
+  route_key          = "GET /api/dashboard-summary"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.ip_authorizer.id  
+  authorization_type = "CUSTOM"                                      
 }
 
-# 3. MỞ THÊM CỬA CHO NÚT SỬA LỖI (MỚI)
 resource "aws_apigatewayv2_route" "remediate_route" {
-  api_id    = aws_apigatewayv2_api.cspm_api.id
-  route_key = "POST /api/findings/{id}/remediate"
-  target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  api_id             = aws_apigatewayv2_api.cspm_api.id
+  route_key          = "POST /api/findings/{id}/remediate"
+  target             = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.ip_authorizer.id 
+  authorization_type = "CUSTOM"                                      
 }
+
+resource "aws_apigatewayv2_route" "get_spam_ips_route" {
+  api_id             = aws_apigatewayv2_api.cspm_api.id
+  route_key          = "GET /api/cloudwatch/spam-ips"
+  target             = "integrations/${aws_apigatewayv2_integration.spam_ip_integration.id}"
+  authorizer_id      = aws_apigatewayv2_authorizer.ip_authorizer.id 
+  authorization_type = "CUSTOM"        
+}
+////////////////////////////////////////////////////////////////////////////////////
 
 # 4. Nối "Quầy số 1" với anh "Lễ tân" Lambda
 resource "aws_apigatewayv2_integration" "lambda_integration" {
